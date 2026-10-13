@@ -1,10 +1,12 @@
 # --- Python ---
 .venv/
 __pycache__/
+.pytest_cache/
 *.py[cod]
 
 # --- 実行時の出力 ---
 out/
+MUJOCO_LOG.TXT
 
 # --- エディタ / OS ---
 .vscode/
