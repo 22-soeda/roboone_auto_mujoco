@@ -1,0 +1,15 @@
+<mujoco model="pendulum">
+  <option timestep="0.001"/>
+  <worldbody>
+    <light pos="0 0 2"/>
+    <geom name="floor" type="plane" size="1 1 0.1"/>
+    <body name="arm" pos="0 0 0.6">
+      <joint name="shoulder" type="hinge" axis="0 1 0" range="-90 90"/>
+      <geom type="capsule" fromto="0 0 0  0 0 -0.3" size="0.02"/>
+      <geom type="sphere" pos="0 0 -0.3" size="0.05"/>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="servo" joint="shoulder" kp="20" kv="1" ctrlrange="-1.57 1.57" forcerange="-5 5"/>
+  </actuator>
+</mujoco>

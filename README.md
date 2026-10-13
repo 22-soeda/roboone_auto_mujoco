@@ -20,3 +20,12 @@ Windows の開発 PC、Python 3.14、CPU だけで回す。
 py -3.14 -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt
 ```
+
+## モデルをビューアで開く
+
+```bash
+.venv/Scripts/python.exe -m mujoco.viewer --mjcf=examples/pendulum.xml
+```
+
+`examples/` は MuJoCo の操作を覚えるための練習用モデル。`pendulum.xml` はサーボ 1 個で動く振り子で、
+右パネルの Control で指令を出すと、重力で目標から垂れる様子やトルク上限の効き方が見られる。
