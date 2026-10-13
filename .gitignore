@@ -1,0 +1,14 @@
+# --- Python ---
+.venv/
+__pycache__/
+*.py[cod]
+
+# --- 実行時の出力 ---
+out/
+
+# --- エディタ / OS ---
+.vscode/
+.DS_Store
+
+# --- Claude Code のローカル設定 ---
+.claude/settings.local.json
