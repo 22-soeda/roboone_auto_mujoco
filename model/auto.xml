@@ -1,0 +1,157 @@
+<!--
+  ROBO-ONE Auto 2026 の機体モデル（胴体 + 両脚 12 関節）。
+
+  リンクは箱で簡略化した。膝の 4 節リンクと足首のパラレルリンクは閉リンクにせず、
+  見かけの関節軸だけを置いている。
+
+  寸法の出どころ: ros2_ws の src/roboone_kinematics/include/roboone_kinematics/leg_config.hpp
+                  （commit 17df77a）。mm を m に直して写した。
+
+  座標系は ws の機体座標 Σ_B と同じで、x = 前、y = 左、z = 上。
+  関節角は Σ_B の正軸まわりの右ねじを正とし、ws の関節角（AXIS_FLIP を掛ける前）とそのまま一致する。
+  片脚あたりの ws の関節番号との対応:
+    J1 hip_pitch / J2 hip_roll / J3 hip_yaw / J4 knee / J5 ankle_roll / J6 ankle_pitch
+  J5・J6 は ws の enum ではそれぞれ ANKLE_PITCH・ANKLE_ROLL（サーボの呼び名）だが、
+  Σ_B での回転軸は J5 が x（ロール）、J6 が y（ピッチ）なので、ここでは軸の意味で名付けた。
+
+  まだ入っていないもの:
+    - 質量・重心・慣性。各 body に CAD の値で <inertial> を入れる。
+      それまでは geom の体積 × 密度 1000 kg/m³ で自動計算されるので、値に意味はない
+    - 胴体と足裏の大きさ。どの記録にも値がなかったので仮置き
+    - サーボの性質（トルク上限・速度・膝と足首のリンクの伝達比）。いまは関節を理想化してある。
+      歩行計画そのものが正しいかを、モータやリンクの事情と切り分けて確かめるため（下の ideal_servo）
+-->
+<mujoco model="roboone_auto">
+  <!-- 可動域を leg_config.hpp と同じ deg で書くため -->
+  <compiler angle="degree"/>
+  <!-- implicitfast は位置サーボの速度ゲインを陰的に積分する。既定の Euler だと硬いサーボで発散しやすい。
+       刻み 0.5 ms は、下の ideal_servo の硬さで足裏が細かく跳ねない範囲（1 ms だと跳ねた） -->
+  <option timestep="0.0005" integrator="implicitfast"/>
+
+  <!-- 衝突はどの部品も床とだけ取り、リンク同士は当てない。転んだときに胴体や脚が床で止まるようにするため。
+       2 つの geom は「片方の contype と相手の conaffinity のビット AND」が 0 でなければ当たる。
+         床    contype=1 conaffinity=3（ビット 1 と 2 の両方を受ける）
+         足裏  contype=1 conaffinity=1 … 床と当たる。左右の足裏どうしも当たる
+         リンク contype=2 conaffinity=0 … 床とだけ当たる -->
+  <default>
+    <default class="link">
+      <geom type="box" contype="2" conaffinity="0" rgba="0.6 0.6 0.65 1"/>
+    </default>
+    <default class="sole">
+      <geom type="box" contype="1" conaffinity="1" rgba="0.3 0.3 0.35 1"/>
+    </default>
+
+    <!-- 理想化した関節。トルク上限を置かず、指令角にほぼそのまま追従するほど硬い位置サーボにした。
+         物理計算の中で角度を直接書き換えると胴体への反作用が狂うので、硬いサーボで代わりにしている。
+         kp = 10000 N·m/rad で、屈伸と左右の体重移動を振った試験の追従誤差は最大 0.04°（足先で 0.2 mm ほど）。
+         dampratio="1" は臨界減衰になる速度ゲインを MuJoCo に計算させる指定。
+         armature 0.001 は数値を安定させるためだけに入れている。0 だと軽い足首まわりが発散した。
+         inheritrange="1" で指令の範囲を関節の可動域から取る（ctrlrange は deg に変換されないため） -->
+    <default class="ideal_servo">
+      <joint armature="0.001"/>
+      <position kp="10000" dampratio="1" inheritrange="1"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <light pos="0 0 2"/>
+    <geom name="floor" type="plane" size="2 2 0.1" contype="1" conaffinity="3" rgba="0.8 0.8 0.8 1"/>
+
+    <!-- 原点は骨盤。股 3 軸の交点の高さで、左右の中央。
+         高さ 0.299945 = L3 + L4 + L5 + L6 で、脚を伸ばすと足裏がちょうど床に着く -->
+    <body name="pelvis" pos="0 0 0.299945">
+      <freejoint/>
+      <!-- 胴体の箱は仮置き。上半身（腕・頭・電池）の質量も CAD の inertial でここに入れる -->
+      <geom class="link" size="0.04 0.11 0.03" pos="0 0 0.03"/>
+
+      <!-- ===== 右脚 ===== -->
+      <!-- 股 3 軸は股中心 o3 で交わるので、3 つとも大腿の body に置く。
+           並びは骨盤側から pitch → roll → yaw（2026-08-28 に実機で確かめた順） -->
+      <body name="right_thigh" pos="0 -0.0893 0">
+        <joint class="ideal_servo" name="right_hip_pitch" axis="0 1 0" range="-60 60"/>
+        <joint class="ideal_servo" name="right_hip_roll"  axis="1 0 0" range="-60 60"/>
+        <joint class="ideal_servo" name="right_hip_yaw"   axis="0 0 1" range="-60 60"/>
+        <geom class="link" fromto="0 0 0  0 0 -0.1425" size="0.015"/>
+
+        <!-- 膝軸 o4。膝は脚の面の真ん前に出るので、膝の点は股と足首を結ぶ面の上に置いた。
+             leg_config.hpp は膝軸上の点を内側 14.642 mm（下腿で同じだけ戻る）に取っているが、
+             ずれは膝軸に沿っているので関節角にも足裏の位置にも効かない（効くのは大腿と下腿のずれの和 = 0）。
+             hpp どおりに置くと正面から内またに見え、実機の形と違ったので面の上に寄せた（2026-10-14 添田） -->
+        <body name="right_shank" pos="0 0 -0.1425">
+          <joint class="ideal_servo" name="right_knee" axis="0 1 0" range="0 150"/>
+          <geom class="link" fromto="0 0 0  0 0 -0.141021" size="0.015"/>
+
+          <!-- 足首ロール軸 o5。ユニバーサルジョイントの十字にあたる -->
+          <body name="right_ankle_cross" pos="0 0 -0.141021">
+            <joint class="ideal_servo" name="right_ankle_roll" axis="1 0 0" range="-60 60"/>
+            <geom class="link" size="0.006 0.006 0.006" pos="0 0 -0.003962"/>
+
+            <!-- 足首ピッチ軸 o6 -->
+            <body name="right_foot" pos="0 0 -0.007924">
+              <joint class="ideal_servo" name="right_ankle_pitch" axis="0 1 0" range="-60 60"/>
+              <!-- 足裏は仮置き（前後 100 mm・左右 60 mm・厚さ 5 mm）。下面が足裏中心 p6 に来る -->
+              <geom class="sole" size="0.05 0.03 0.0025" pos="0 0 -0.006"/>
+              <site name="right_sole" pos="0 0 -0.0085"/>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- ===== 左脚 ===== -->
+      <!-- 右脚の y を反転したもの。関節軸と角の正負は左右共通（Σ_B） -->
+      <body name="left_thigh" pos="0 0.0893 0">
+        <joint class="ideal_servo" name="left_hip_pitch" axis="0 1 0" range="-60 60"/>
+        <joint class="ideal_servo" name="left_hip_roll"  axis="1 0 0" range="-60 60"/>
+        <joint class="ideal_servo" name="left_hip_yaw"   axis="0 0 1" range="-60 60"/>
+        <geom class="link" fromto="0 0 0  0 0 -0.1425" size="0.015"/>
+
+        <body name="left_shank" pos="0 0 -0.1425">
+          <joint class="ideal_servo" name="left_knee" axis="0 1 0" range="0 150"/>
+          <geom class="link" fromto="0 0 0  0 0 -0.141021" size="0.015"/>
+
+          <body name="left_ankle_cross" pos="0 0 -0.141021">
+            <joint class="ideal_servo" name="left_ankle_roll" axis="1 0 0" range="-60 60"/>
+            <geom class="link" size="0.006 0.006 0.006" pos="0 0 -0.003962"/>
+
+            <body name="left_foot" pos="0 0 -0.007924">
+              <joint class="ideal_servo" name="left_ankle_pitch" axis="0 1 0" range="-60 60"/>
+              <geom class="sole" size="0.05 0.03 0.0025" pos="0 0 -0.006"/>
+              <site name="left_sole" pos="0 0 -0.0085"/>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- 名前は動かす関節と同じにした。膝の 4 節リンクと足首のパラレルリンクの事情は入れず、
+       見かけの軸ごとに理想化したサーボを 1 個ずつ置いている -->
+  <actuator>
+    <position class="ideal_servo" name="right_hip_pitch"   joint="right_hip_pitch"/>
+    <position class="ideal_servo" name="right_hip_roll"    joint="right_hip_roll"/>
+    <position class="ideal_servo" name="right_hip_yaw"     joint="right_hip_yaw"/>
+    <position class="ideal_servo" name="right_knee"        joint="right_knee"/>
+    <position class="ideal_servo" name="right_ankle_roll"  joint="right_ankle_roll"/>
+    <position class="ideal_servo" name="right_ankle_pitch" joint="right_ankle_pitch"/>
+
+    <position class="ideal_servo" name="left_hip_pitch"    joint="left_hip_pitch"/>
+    <position class="ideal_servo" name="left_hip_roll"     joint="left_hip_roll"/>
+    <position class="ideal_servo" name="left_hip_yaw"      joint="left_hip_yaw"/>
+    <position class="ideal_servo" name="left_knee"         joint="left_knee"/>
+    <position class="ideal_servo" name="left_ankle_roll"   joint="left_ankle_roll"/>
+    <position class="ideal_servo" name="left_ankle_pitch"  joint="left_ankle_pitch"/>
+  </actuator>
+
+  <!-- ws の roboone_motion/config/home_pose.yaml（高さ 261 mm・前後 -20 mm・足裏水平）を、
+       ws の IK（scripts/leg_ik.py、commit 17df77a）で関節角に直した値。
+       股ピッチ -25.848° / 膝 59.311° / 足首ピッチ -33.463°。qpos と ctrl はラジアンで書く。
+       qpos の並び: 骨盤の位置 xyz と姿勢 wxyz、右脚 6 軸、左脚 6 軸（各脚 J1〜J6 の順） -->
+  <keyframe>
+    <key name="home"
+         qpos="0 0 0.261  1 0 0 0
+               -0.451133 0 0  1.035172  0 -0.58404
+               -0.451133 0 0  1.035172  0 -0.58404"
+         ctrl="-0.451133 0 0  1.035172  0 -0.58404
+               -0.451133 0 0  1.035172  0 -0.58404"/>
+  </keyframe>
+</mujoco>
