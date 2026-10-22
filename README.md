@@ -15,6 +15,7 @@ ws は ROS 2 の上にあるので、このリポジトリはそこから切り�
 | 写したもの | 写し元（ws commit 17df77a） |
 |---|---|
 | `ws_copy/leg_ik.py` 片脚の IK | `scripts/leg_ik.py` の `ik()` と、`leg_config.hpp` の寸法 |
+| `ws_copy/walk_core/` 歩行計画 | `src/roboone_motion/roboone_motion/walk_core/`（書き換えなし） |
 | `model/auto.xml` の寸法 | `src/roboone_kinematics/include/roboone_kinematics/leg_config.hpp` |
 | `model/auto.xml` のホーム姿勢 | `src/roboone_motion/config/home_pose.yaml` を ws の IK に通した値 |
 
@@ -39,6 +40,36 @@ py -3.14 -m venv .venv
 モータやリンクの事情と切り分けて、歩行計画そのものが正しいかを確かめるため。
 右パネルの Control で関節ごとに指令を出せる。左パネル Simulation の Key を 0 にして Load key を押すと、
 ws のホーム姿勢（高さ 261 mm）から始まる。質量は CAD の値がまだ入っていないので、立ち方の数字には意味がない。
+
+## 歩行計画を流す
+
+```bash
+.venv/Scripts/python.exe run_walk.py                              # ビューアで見る（実時間）
+.venv/Scripts/python.exe run_walk.py --no-viewer                  # 数字だけ出す
+.venv/Scripts/python.exe run_walk.py --vx 0.0 --vy 0.06 --no-viewer   # 横歩き（左が正）
+.venv/Scripts/python.exe run_walk.py --record out/walk.mp4         # mp4 に書き出す（ffmpeg が要る）
+.venv/Scripts/python.exe run_walk.py --touchdown ws --no-viewer    # 着地まわりを実機と同じにする
+```
+
+0.5 s から `--walk-until`（既定 4.5 s）まで速度指令を入れ、そのあと 0 に戻して止まらせる。
+walk_core（`ws_copy/walk_core/`）が 5 ms ごとに出す足裏の目標を IK で関節角に直し、理想化した
+サーボに渡す。IMU のフィードバックも脚のたわみの補正も入れない純フィードフォワード。
+動画は 1280×720・30 fps の実時間で、歩く道のりの真ん中を斜め前から見る固定カメラで撮る。
+
+`--touchdown` は着地まわりの 2 つの設定、遊脚を床より 4 mm 下まで下ろす `td_overdrive` と、
+遊脚の降下速度の上限 `td_speed_max` の組み合わせを選ぶ。上限があると遊脚が降りきれず、歩の終わりでも
+床から 1.6〜1.9 mm 浮いたまま支持脚が入れ替わる。上限がある 2 つは計画どおりに歩けない。
+
+| `--touchdown` | td_overdrive | td_speed_max | 前後・横・斜めの指令 6 通り |
+|---|---|---|---|
+| `pure`（既定） | 0 | 上限なし | 計画どおり歩く。骨盤のずれ最大 20〜51 mm、向きの変化 2° 以下 |
+| `ws`（実機と同じ） | 4 mm | 0.1 m/s | 転ばないが、機体が 16〜87° 回って計画から 33〜44 cm ずれる |
+| `limit-only`（比較用） | 0 | 0.1 m/s | 5 通りで転ぶ |
+
+突き抜けだけ（4 mm・上限なし）も試していて、計画どおり歩いた（骨盤のずれ最大 19〜102 mm、向き 4° 以下）。
+
+終わりに、転倒したか、骨盤の水平位置と計画の重心のずれ、床の圧力中心と計画の ZMP のずれ、
+踏んでいる間の足の滑りを出す。
 
 ## テスト
 
